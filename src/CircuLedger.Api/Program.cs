@@ -117,13 +117,20 @@ try
         Policy(RateLimitPolicies.Auth, limits.GetValue("AuthPerMinute", 10));
     });
 
-    // CORS for the admin dashboard and marketplace front-ends.
-    var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
-    builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
-        .WithOrigins(origins)
-        .AllowAnyHeader()
-        .AllowAnyMethod()
-        .WithExposedHeaders("api-supported-versions", "Content-Disposition")));
+    // CORS for the admin dashboard and marketplace front-ends. "*" in Cors:AllowedOrigins allows any origin.
+    var origins = (builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [])
+        .Select(origin => origin.Trim().TrimEnd('/'))
+        .Where(origin => origin.Length > 0)
+        .ToArray();
+    builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
+    {
+        if (origins.Contains("*")) p.SetIsOriginAllowed(_ => true);
+        else p.WithOrigins(origins);
+        p.AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials()
+            .WithExposedHeaders("api-supported-versions", "Content-Disposition");
+    }));
 
     builder.Services.Configure<ForwardedHeadersOptions>(o =>
     {

@@ -43,8 +43,6 @@ services:
       Seed__DemoPassword: ${DEMO_PASSWORD:-}
       Gateway__WebhookToken: ${GATEWAY_WEBHOOK_TOKEN:-}
       Swagger__Enabled: ${SWAGGER_ENABLED:-true}
-      Cors__AllowedOrigins__0: ${CORS_ORIGIN_DASHBOARD:-http://localhost:3000}
-      Cors__AllowedOrigins__1: ${CORS_ORIGIN_MARKETPLACE:-http://localhost:5173}
     volumes:
       - circuledger_appdata:/app/App_Data
 
