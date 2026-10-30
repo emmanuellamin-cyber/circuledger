@@ -1,0 +1,68 @@
+name: circuledger
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-circuledger}
+      POSTGRES_USER: ${POSTGRES_USER:-circuledger}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "5432:5432"
+    volumes:
+      - circuledger_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: .
+    image: circuledger-api:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ConnectionStrings__CircuLedgerDb: "Host=db;Port=5432;Database=${POSTGRES_DB:-circuledger};Username=${POSTGRES_USER:-circuledger};Password=${POSTGRES_PASSWORD}"
+      Hub__PublicBaseUrl: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?Set JWT_SIGNING_KEY in .env}
+      DataProtection__PhoneHashKey: ${PHONE_HASH_KEY:?Set PHONE_HASH_KEY in .env}
+      DataProtection__ImeiHashKey: ${IMEI_HASH_KEY:?Set IMEI_HASH_KEY in .env}
+      DataProtection__PhoneEncryptionKey: ${PHONE_ENCRYPTION_KEY:?Set PHONE_ENCRYPTION_KEY in .env}
+      Certificates__Signing__PrivateKeyPem: ${CERT_SIGNING_PRIVATE_KEY_PEM:-}
+      Certificates__Signing__AutoGenerateIfMissing: ${CERT_SIGNING_AUTOGENERATE:-true}
+      Seed__AdminEmail: ${ADMIN_EMAIL:-admin@circuledger.local}
+      Seed__AdminPassword: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      Seed__DemoData: ${SEED_DEMO_DATA:-false}
+      Seed__DemoPassword: ${DEMO_PASSWORD:-}
+      Gateway__WebhookToken: ${GATEWAY_WEBHOOK_TOKEN:-}
+      Swagger__Enabled: ${SWAGGER_ENABLED:-true}
+      Cors__AllowedOrigins__0: ${CORS_ORIGIN_DASHBOARD:-http://localhost:3000}
+      Cors__AllowedOrigins__1: ${CORS_ORIGIN_MARKETPLACE:-http://localhost:5173}
+    volumes:
+      - circuledger_appdata:/app/App_Data
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@circuledger.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?Set PGADMIN_PASSWORD in .env}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - circuledger_pgadmin:/var/lib/pgadmin
+
+volumes:
+  circuledger_pgdata:
+  circuledger_appdata:
+  circuledger_pgadmin:

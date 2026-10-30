@@ -1,0 +1,44 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo.
+# Values marked `sync: false` are prompted for on first deploy.
+
+databases:
+  - name: circuledger-db
+    databaseName: circuledger
+    user: circuledger
+    plan: basic-256mb
+    region: frankfurt
+
+services:
+  - type: web
+    name: circuledger-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter            # persistent disks need a paid instance
+    region: frankfurt
+    healthCheckPath: /health
+    disk:
+      # Uploaded photos + auto-generated certificate signing key. Without a disk these are lost on every deploy.
+      name: app-data
+      mountPath: /app/App_Data
+      sizeGB: 1
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ConnectionStrings__CircuLedgerDb
+        fromDatabase:
+          name: circuledger-db
+          property: connectionString
+      - key: Hub__PublicBaseUrl
+        sync: false          # e.g. https://circuledger-api.onrender.com
+      # JWT, data-protection keys and admin password come from appsettings.json.
+      - key: Seed__DemoData
+        value: "false"
+      - key: Gateway__WebhookToken
+        sync: false
+      - key: Swagger__Enabled
+        value: "true"
+      - key: Cors__AllowedOrigins__0
+        sync: false
+      - key: Cors__AllowedOrigins__1
+        sync: false

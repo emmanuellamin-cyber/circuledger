@@ -1,0 +1,301 @@
+### CircuLedger API: end-to-end pilot pipeline
+### Works in Rider / VS / VS Code (REST Client). Run requests top to bottom: later ones reuse captured values.
+### Local `dotnet run` uses http://localhost:5097 ; docker compose uses http://localhost:8080
+### Demo accounts exist when Seed:DemoData=true (Development and the default .env.example).
+
+@host = http://localhost:5097
+@api = {{host}}/api/v1
+@demoPassword = ChangeMe!Demo2026
+@adminPassword = ChangeMe!Admin2026
+@phone = +23276123456
+@session = ATUid_demo_001
+
+### 0. Health
+GET {{host}}/health
+
+### ---------------------------------------------------------------- Auth
+# @name loginOps
+POST {{api}}/auth/login
+Content-Type: application/json
+
+{ "email": "ops@circuledger.local", "password": "{{demoPassword}}" }
+
+###
+@ops = {{loginOps.response.body.accessToken}}
+
+# @name loginTech
+POST {{api}}/auth/login
+Content-Type: application/json
+
+{ "email": "tech@circuledger.local", "password": "{{demoPassword}}" }
+
+###
+@tech = {{loginTech.response.body.accessToken}}
+
+# @name loginAgent
+POST {{api}}/auth/login
+Content-Type: application/json
+
+{ "email": "agent@circuledger.local", "password": "{{demoPassword}}" }
+
+###
+@agent = {{loginAgent.response.body.accessToken}}
+
+# @name loginBuyer
+POST {{api}}/auth/login
+Content-Type: application/json
+
+{ "email": "buyer@circuledger.local", "password": "{{demoPassword}}" }
+
+###
+@buyer = {{loginBuyer.response.body.accessToken}}
+
+# @name loginAdmin
+POST {{api}}/auth/login
+Content-Type: application/json
+
+{ "email": "admin@circuledger.local", "password": "{{adminPassword}}" }
+
+###
+@admin = {{loginAdmin.response.body.accessToken}}
+
+### Refresh (rotates the token; reusing the old one revokes all sessions)
+POST {{api}}/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "{{loginBuyer.response.body.refreshToken}}" }
+
+### ---------------------------------------------------------------- 1. USSD sell request (Africa's Talking format)
+# Each hop sends the FULL input history in "text". Responses are plain text: "CON ..." or "END ...".
+POST {{api}}/ussd/callback
+Content-Type: application/x-www-form-urlencoded
+
+sessionId={{session}}&serviceCode=*384*1234%23&phoneNumber={{phone}}&text=
+
+###
+POST {{api}}/ussd/callback
+Content-Type: application/x-www-form-urlencoded
+
+sessionId={{session}}&serviceCode=*384*1234%23&phoneNumber={{phone}}&text=1
+
+### Samsung (1) → Broken screen (2) → Request pickup (2)
+POST {{api}}/ussd/callback
+Content-Type: application/x-www-form-urlencoded
+
+sessionId={{session}}&serviceCode=*384*1234%23&phoneNumber={{phone}}&text=1*1*2*2
+
+### Area → confirmation screen with the estimated offer
+POST {{api}}/ussd/callback
+Content-Type: application/x-www-form-urlencoded
+
+sessionId={{session}}&serviceCode=*384*1234%23&phoneNumber={{phone}}&text=1*1*2*2*Towama layout
+
+### Confirm → "END Thank you! Ref: SYXXXXXX" (replaying this exact request returns the same answer, no duplicate)
+POST {{api}}/ussd/callback
+Content-Type: application/x-www-form-urlencoded
+
+sessionId={{session}}&serviceCode=*384*1234%23&phoneNumber={{phone}}&text=1*1*2*2*Towama layout*1
+
+### Find the request (staff view: phone is masked)
+# @name pendingPickups
+GET {{api}}/intake-requests?status=Pending&fulfilmentMethod=Pickup&pageSize=50
+Authorization: Bearer {{ops}}
+
+###
+@intakeId = {{pendingPickups.response.body.items[0].id}}
+
+### Inbound SMS alternative
+POST {{api}}/sms/inbound
+Content-Type: application/x-www-form-urlencoded
+
+from=+23277111222&to=21212&text=SELL Tecno DEAD Kowama market&id=sms-demo-1
+
+### ---------------------------------------------------------------- 2. Pickup batch (Haversine clustering)
+# @name batches
+POST {{api}}/dispatch/batches/generate
+Authorization: Bearer {{ops}}
+Content-Type: application/json
+
+{ "radiusKm": 5, "maxPerBatch": 10 }
+
+###
+@batchId = {{batches.response.body.batches[0].id}}
+@pickupId = {{batches.response.body.batches[0].pickups[0].intakeRequestId}}
+
+### Agent: my batches, reveal the seller's phone (logged), mark collected
+GET {{api}}/dispatch/my-batches
+Authorization: Bearer {{agent}}
+
+###
+GET {{api}}/dispatch/batches/{{batchId}}/pickups/{{pickupId}}/contact
+Authorization: Bearer {{agent}}
+
+###
+POST {{api}}/dispatch/batches/{{batchId}}/pickups/{{pickupId}}/collect
+Authorization: Bearer {{agent}}
+
+### ---------------------------------------------------------------- 3. Receive at hub → Device + tracking ID
+# @name points
+GET {{api}}/public/drop-off-points
+
+###
+# @name received
+POST {{api}}/intake-requests/{{pickupId}}/receive
+Authorization: Bearer {{ops}}
+Content-Type: application/json
+
+{ "dropOffPointId": "{{points.response.body.$[0].id}}", "imei": "352099001761481", "model": "Galaxy A14" }
+
+###
+@deviceId = {{received.response.body.id}}
+@trackingId = {{received.response.body.trackingId}}
+
+### ---------------------------------------------------------------- 4. Purchase (debits the Seed Fund; 409 if insufficient)
+POST {{api}}/devices/{{deviceId}}/purchase
+Authorization: Bearer {{ops}}
+Content-Type: application/json
+
+{ "payoutMethod": "OrangeMoney" }
+
+###
+PUT {{api}}/devices/{{deviceId}}/purchase/payout
+Authorization: Bearer {{ops}}
+Content-Type: application/json
+
+{ "status": "Paid", "payoutReference": "OM-TXN-445566" }
+
+### ---------------------------------------------------------------- 5. Sanitization → Certificate (signed, SMS'd to the owner)
+# @name sanitized
+POST {{api}}/devices/{{deviceId}}/sanitizations
+Authorization: Bearer {{tech}}
+Content-Type: application/json
+
+{
+  "method": "SamsungKnoxGradeErase",
+  "startedAt": "2026-10-30T09:00:00Z",
+  "completedAt": "2026-10-30T09:20:00Z",
+  "passes": 1,
+  "outcome": "Passed",
+  "toolName": "Samsung Knox Wipe"
+}
+
+###
+@certNo = {{sanitized.response.body.certificate.certificateNumber}}
+
+### Download the PDF certificate (with QR code)
+GET {{api}}/certificates/{{certNo}}/pdf
+Authorization: Bearer {{tech}}
+
+### ---------------------------------------------------------------- 6. Public verification (anonymous, no personal data)
+GET {{api}}/public/certificates/{{certNo}}/verify
+
+### Public signing key, for offline verification
+GET {{api}}/public/certificates/signing-key
+
+### ---------------------------------------------------------------- 7. Recovery: refurbish this device
+PUT {{api}}/devices/{{deviceId}}/recovery-outcome
+Authorization: Bearer {{tech}}
+Content-Type: application/json
+
+{ "outcome": "Refurbish" }
+
+### Dismantle path (on another, sanitized/NotEligible device whose outcome is DismantleForParts):
+# POST {{api}}/devices/{otherDeviceId}/dismantle            { "notes": "..." }
+# POST {{api}}/devices/{otherDeviceId}/components           { "type": "Battery", "grade": "C" }
+# POST {{api}}/recovery/hazardous-materials                 { "deviceId": "...", "material": "LithiumBattery", "weightKg": 0.045, "storageLocation": "Njala Hub bin 2", "isSwollenBattery": false }
+GET {{api}}/recovery/hazardous-materials/summary
+Authorization: Bearer {{tech}}
+
+### ---------------------------------------------------------------- 8. Listing with a verified photo
+# @name listing
+POST {{api}}/listings
+Authorization: Bearer {{ops}}
+Content-Type: application/json
+
+{
+  "itemType": "RefurbishedDevice",
+  "deviceId": "{{deviceId}}",
+  "title": "Samsung Galaxy A14 - refurbished, new screen",
+  "description": "Data wiped with Knox-grade erase. Certificate shown on listing.",
+  "priceSle": 1200,
+  "condition": "B",
+  "warrantyDays": 90
+}
+
+###
+@listingId = {{listing.response.body.id}}
+
+### Upload a photo (technician). Put a real JPEG/PNG at ./docs/sample-phone.png
+# @name photo
+POST {{api}}/listings/{{listingId}}/photos
+Authorization: Bearer {{tech}}
+Content-Type: multipart/form-data; boundary=CircuBoundary
+
+--CircuBoundary
+Content-Disposition: form-data; name="file"; filename="sample-phone.png"
+Content-Type: image/png
+
+< ./docs/sample-phone.png
+--CircuBoundary--
+
+### Verify the photo (must be someone other than the uploader)
+POST {{api}}/listings/{{listingId}}/photos/{{photo.response.body.id}}/verify
+Authorization: Bearer {{ops}}
+
+###
+POST {{api}}/listings/{{listingId}}/publish
+Authorization: Bearer {{ops}}
+
+### Public marketplace browse / search / filter
+GET {{api}}/public/listings?samsungOnly=true&minPrice=500&maxPrice=2000&sort=price_asc&page=1&pageSize=20
+
+### ---------------------------------------------------------------- 9. Order → Paid → reinvestment
+# @name order
+POST {{api}}/orders
+Authorization: Bearer {{buyer}}
+Content-Type: application/json
+
+{ "listingIds": ["{{listingId}}"] }
+
+###
+POST {{api}}/orders/{{order.response.body.id}}/pay
+Authorization: Bearer {{ops}}
+Content-Type: application/json
+
+{ "paymentMethod": "OrangeMoney", "paymentReference": "OM-778812" }
+
+###
+POST {{api}}/orders/{{order.response.body.id}}/fulfil
+Authorization: Bearer {{ops}}
+
+### ---------------------------------------------------------------- 10. Funds & reinvestment
+GET {{api}}/funds
+Authorization: Bearer {{ops}}
+
+###
+GET {{api}}/reinvestment-rule
+Authorization: Bearer {{ops}}
+
+### ---------------------------------------------------------------- 11. Ledger
+GET {{api}}/ledger/devices/{{trackingId}}
+Authorization: Bearer {{ops}}
+
+###
+GET {{api}}/ledger/verify
+Authorization: Bearer {{ops}}
+
+### ---------------------------------------------------------------- 12. Dashboard KPIs & M&E exports
+GET {{api}}/dashboard/kpis
+Authorization: Bearer {{ops}}
+
+###
+GET {{api}}/dashboard/time-series/intake?from=2026-09-01
+Authorization: Bearer {{ops}}
+
+###
+GET {{api}}/dashboard/export/kpis.csv
+Authorization: Bearer {{ops}}
+
+###
+GET {{api}}/dashboard/export/weekly.csv
+Authorization: Bearer {{ops}}

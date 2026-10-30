@@ -1,0 +1,11 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+# Local secrets and runtime data
+.env
+**/App_Data/
+*.pem
+.idea/
+

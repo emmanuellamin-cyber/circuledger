@@ -1,0 +1,10 @@
+﻿**/bin/
+**/obj/
+**/App_Data/
+.git/
+.idea/
+.vs/
+tests/
+.env
+*.md
+
