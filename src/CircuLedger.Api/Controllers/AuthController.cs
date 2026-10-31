@@ -36,7 +36,7 @@ public sealed class AuthController(IAuthService auth) : ApiControllerBase
 
 [Route("api/v{version:apiVersion}/users")]
 [Authorize]
-public sealed class UsersController(IUserService users, IIntakeService intake) : ApiControllerBase
+public sealed class UsersController(IUserService users, IAuthService auth, IIntakeService intake) : ApiControllerBase
 {
     [HttpGet("me")]
     public async Task<ActionResult<UserProfileDto>> Me(CancellationToken ct) => Ok(await users.GetProfileAsync(CurrentUserId, ct));
@@ -44,6 +44,24 @@ public sealed class UsersController(IUserService users, IIntakeService intake) :
     [HttpPut("me")]
     public async Task<ActionResult<UserProfileDto>> UpdateMe(UpdateProfileRequest request, CancellationToken ct) =>
         Ok(await users.UpdateProfileAsync(CurrentUserId, request, ct));
+
+    /// <summary>Changes the login email. Requires the current password.</summary>
+    [HttpPut("me/email")]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
+    public async Task<ActionResult<UserProfileDto>> ChangeEmail(ChangeEmailRequest request, CancellationToken ct) =>
+        Ok(await users.ChangeEmailAsync(CurrentUserId, request, ct));
+
+    /// <summary>Changes the contact phone. For citizens, USSD/SMS requests from the new number appear under this account.</summary>
+    [HttpPut("me/phone")]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
+    public async Task<ActionResult<UserProfileDto>> ChangePhone(ChangePhoneRequest request, CancellationToken ct) =>
+        Ok(await users.ChangePhoneAsync(CurrentUserId, request, ct));
+
+    /// <summary>Changes the signed-in user's password. All other sessions are signed out; the response carries new tokens.</summary>
+    [HttpPut("me/password")]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
+    public async Task<ActionResult<AuthResponse>> ChangePassword(ChangePasswordRequest request, CancellationToken ct) =>
+        Ok(await auth.ChangePasswordAsync(CurrentUserId, request, ct));
 
     /// <summary>A registered citizen's own sell requests (matched by the phone number they registered with).</summary>
     [HttpGet("me/intake-requests")]

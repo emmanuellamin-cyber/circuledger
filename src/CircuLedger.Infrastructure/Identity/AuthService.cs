@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using IPersonalDataProtector = CircuLedger.Application.Common.Interfaces.IPersonalDataProtector;
 
 namespace CircuLedger.Infrastructure.Identity;
 
@@ -20,6 +21,7 @@ public sealed class AuthService(
     SignInManager<ApplicationUser> signInManager,
     ApplicationDbContext db,
     ICitizenService citizens,
+    IPersonalDataProtector protector,
     IOptions<JwtOptions> jwtOptions,
     TimeProvider time,
     ILogger<AuthService> logger) : IAuthService
@@ -38,6 +40,7 @@ public sealed class AuthService(
                 Gender = request.Gender,
                 CreatedAt = time.GetUtcNow().UtcDateTime
             };
+            if (!string.IsNullOrWhiteSpace(request.Phone)) SetPhone(user, request.Phone, protector);
             var result = await userManager.CreateAsync(user, request.Password);
             EnsureSucceeded(result);
             EnsureSucceeded(await userManager.AddToRoleAsync(user, request.AccountType));
@@ -100,6 +103,28 @@ public sealed class AuthService(
         }
     }
 
+    public async Task<AuthResponse> ChangePasswordAsync(string userId, ChangePasswordRequest request, CancellationToken ct = default)
+    {
+        var user = await userManager.FindByIdAsync(userId);
+        if (user is null || !user.IsActive)
+            throw new UnauthorizedAccessException("Not signed in.");
+        await VerifyCurrentPasswordAsync(signInManager, user, request.CurrentPassword);
+
+        return await db.ExecuteInTransactionAsync(async token =>
+        {
+            EnsureSucceeded(await userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword));
+
+            // Sign out every other device: all existing refresh tokens die, and the caller gets a fresh pair.
+            var now = time.GetUtcNow().UtcDateTime;
+            await db.RefreshTokens
+                .Where(t => t.UserId == user.Id && t.RevokedAt == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), token);
+
+            logger.LogInformation("User {UserId} changed their password; all sessions revoked", user.Id);
+            return await IssueTokensAsync(user, token);
+        }, ct);
+    }
+
     private async Task<AuthResponse> IssueTokensAsync(ApplicationUser user, CancellationToken ct, RefreshToken? rotated = null)
     {
         var now = time.GetUtcNow().UtcDateTime;
@@ -139,6 +164,31 @@ public sealed class AuthService(
         await db.SaveChangesAsync(ct);
 
         return new AuthResponse(accessToken, accessExpires, refreshToken, refreshExpires, UserService.ToDto(user, roles));
+    }
+
+    /// <summary>
+    /// Re-authenticates before a sensitive account change. Goes through the sign-in manager so wrong guesses
+    /// count towards lockout, exactly as at login.
+    /// </summary>
+    internal static async Task VerifyCurrentPasswordAsync(SignInManager<ApplicationUser> signInManager, ApplicationUser user, string password)
+    {
+        var check = await signInManager.CheckPasswordSignInAsync(user, password, lockoutOnFailure: true);
+        if (check.IsLockedOut)
+            throw new UnauthorizedAccessException("Account is temporarily locked after repeated failed attempts.");
+        if (!check.Succeeded)
+            throw new FluentValidation.ValidationException(
+                [new FluentValidation.Results.ValidationFailure("CurrentPassword", "Current password is incorrect.")]);
+    }
+
+    /// <summary>Stores the phone encrypted on the account, the same way citizen phones are held.</summary>
+    internal static string SetPhone(ApplicationUser user, string rawPhone, IPersonalDataProtector protector)
+    {
+        var phone = protector.NormalizePhone(rawPhone)
+                    ?? throw new FluentValidation.ValidationException(
+                        [new FluentValidation.Results.ValidationFailure("Phone", "Enter a valid Sierra Leone phone number.")]);
+        user.PhoneEncrypted = protector.EncryptPhone(phone);
+        user.PhoneLast4 = IPersonalDataProtector.Last4(phone);
+        return phone;
     }
 
     internal static string HashToken(string token) =>

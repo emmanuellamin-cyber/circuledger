@@ -21,6 +21,7 @@ public sealed record UserProfileDto(
     string Email,
     string FullName,
     Gender Gender,
+    string? MaskedPhone,
     IReadOnlyList<string> Roles,
     bool IsActive,
     DateTime CreatedAt);
@@ -33,6 +34,12 @@ public sealed record AuthResponse(
     UserProfileDto User);
 
 public sealed record UpdateProfileRequest(string FullName, Gender Gender);
+
+public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
+public sealed record ChangeEmailRequest(string NewEmail, string CurrentPassword);
+
+public sealed record ChangePhoneRequest(string Phone, string CurrentPassword);
 
 public sealed record CreateUserRequest(string Email, string Password, string FullName, Gender Gender, IReadOnlyList<string> Roles);
 
@@ -50,12 +57,21 @@ public interface IAuthService
     Task<AuthResponse> LoginAsync(LoginRequest request, CancellationToken ct = default);
     Task<AuthResponse> RefreshAsync(RefreshRequest request, CancellationToken ct = default);
     Task RevokeAsync(RefreshRequest request, CancellationToken ct = default);
+
+    /// <summary>Changes the signed-in user's password, revokes every existing session and returns fresh tokens.</summary>
+    Task<AuthResponse> ChangePasswordAsync(string userId, ChangePasswordRequest request, CancellationToken ct = default);
 }
 
 public interface IUserService
 {
     Task<UserProfileDto> GetProfileAsync(string userId, CancellationToken ct = default);
     Task<UserProfileDto> UpdateProfileAsync(string userId, UpdateProfileRequest request, CancellationToken ct = default);
+
+    /// <summary>Changes the login email (also the user name). Requires the current password.</summary>
+    Task<UserProfileDto> ChangeEmailAsync(string userId, ChangeEmailRequest request, CancellationToken ct = default);
+
+    /// <summary>Changes the contact phone. For citizens this also moves the USSD/SMS link to the new number.</summary>
+    Task<UserProfileDto> ChangePhoneAsync(string userId, ChangePhoneRequest request, CancellationToken ct = default);
     Task<PagedResult<UserProfileDto>> ListAsync(UserListQuery query, CancellationToken ct = default);
     Task<UserProfileDto> CreateAsync(CreateUserRequest request, CancellationToken ct = default);
     Task<UserProfileDto> AssignRolesAsync(string userId, AssignRolesRequest request, CancellationToken ct = default);
@@ -97,6 +113,34 @@ public sealed class UpdateProfileRequestValidator : AbstractValidator<UpdateProf
     {
         RuleFor(x => x.FullName).NotEmpty().MaximumLength(150);
         RuleFor(x => x.Gender).IsInEnum();
+    }
+}
+
+public sealed class ChangePasswordRequestValidator : AbstractValidator<ChangePasswordRequest>
+{
+    public ChangePasswordRequestValidator()
+    {
+        RuleFor(x => x.CurrentPassword).NotEmpty().MaximumLength(128);
+        RuleFor(x => x.NewPassword).NotEmpty().MinimumLength(10).MaximumLength(128)
+            .NotEqual(x => x.CurrentPassword).WithMessage("The new password must be different from the current one.");
+    }
+}
+
+public sealed class ChangeEmailRequestValidator : AbstractValidator<ChangeEmailRequest>
+{
+    public ChangeEmailRequestValidator()
+    {
+        RuleFor(x => x.NewEmail).NotEmpty().EmailAddress().MaximumLength(256);
+        RuleFor(x => x.CurrentPassword).NotEmpty().MaximumLength(128);
+    }
+}
+
+public sealed class ChangePhoneRequestValidator : AbstractValidator<ChangePhoneRequest>
+{
+    public ChangePhoneRequestValidator()
+    {
+        RuleFor(x => x.Phone).NotEmpty().MaximumLength(20);
+        RuleFor(x => x.CurrentPassword).NotEmpty().MaximumLength(128);
     }
 }
 

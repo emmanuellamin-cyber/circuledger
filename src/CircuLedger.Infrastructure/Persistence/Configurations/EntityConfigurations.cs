@@ -17,6 +17,8 @@ public class ApplicationUserConfiguration : IEntityTypeConfiguration<Application
     public void Configure(EntityTypeBuilder<ApplicationUser> b)
     {
         b.Property(x => x.FullName).HasMaxLength(150);
+        b.Property(x => x.PhoneEncrypted).HasMaxLength(200);
+        b.Property(x => x.PhoneLast4).HasMaxLength(4);
     }
 }
 

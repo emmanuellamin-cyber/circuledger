@@ -12,6 +12,10 @@ public interface ICitizenService
     /// <summary>Finds a citizen by phone (via its keyed hash) or creates one. The phone is never stored in clear.</summary>
     Task<Citizen> GetOrCreateAsync(string rawPhone, CancellationToken ct = default);
     Task<Citizen?> FindByPhoneAsync(string rawPhone, CancellationToken ct = default);
+    /// <summary>
+    /// Links the account to the citizen with this phone. Any phone the account was linked to before is released,
+    /// so a recycled SIM's future requests never show up in the previous owner's account.
+    /// </summary>
     Task LinkUserAsync(string rawPhone, string userId, string? displayName, Gender gender, CancellationToken ct = default);
 }
 
@@ -47,6 +51,10 @@ public sealed class CitizenService(IApplicationDbContext db, IPersonalDataProtec
         var citizen = await GetOrCreateAsync(rawPhone, ct);
         if (citizen.UserId is not null && citizen.UserId != userId)
             throw new ValidationException([new ValidationFailure("Phone", "This phone number is already linked to another account.")]);
+
+        var previous = await db.Citizens.Where(c => c.UserId == userId && c.Id != citizen.Id).ToListAsync(ct);
+        foreach (var old in previous) old.UserId = null;
+
         citizen.UserId = userId;
         citizen.DisplayName ??= displayName;
         citizen.Gender = gender;

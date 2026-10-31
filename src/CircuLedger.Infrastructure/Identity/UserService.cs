@@ -1,12 +1,21 @@
 using CircuLedger.Application.Auth;
 using CircuLedger.Application.Common;
 using CircuLedger.Application.Common.Interfaces;
+using CircuLedger.Application.Intake;
+using CircuLedger.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using IPersonalDataProtector = CircuLedger.Application.Common.Interfaces.IPersonalDataProtector;
 
 namespace CircuLedger.Infrastructure.Identity;
 
-public sealed class UserService(UserManager<ApplicationUser> userManager, TimeProvider time) : IUserService, IUserDirectory
+public sealed class UserService(
+    UserManager<ApplicationUser> userManager,
+    SignInManager<ApplicationUser> signInManager,
+    ApplicationDbContext db,
+    ICitizenService citizens,
+    IPersonalDataProtector protector,
+    TimeProvider time) : IUserService, IUserDirectory
 {
     public async Task<UserProfileDto> GetProfileAsync(string userId, CancellationToken ct = default)
     {
@@ -21,6 +30,41 @@ public sealed class UserService(UserManager<ApplicationUser> userManager, TimePr
         user.Gender = request.Gender;
         AuthService.EnsureSucceeded(await userManager.UpdateAsync(user));
         return ToDto(user, await userManager.GetRolesAsync(user));
+    }
+
+    public async Task<UserProfileDto> ChangeEmailAsync(string userId, ChangeEmailRequest request, CancellationToken ct = default)
+    {
+        var user = await FindOrThrowAsync(userId);
+        await AuthService.VerifyCurrentPasswordAsync(signInManager, user, request.CurrentPassword);
+
+        var email = request.NewEmail.Trim();
+        if (!string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
+        {
+            // Email doubles as the user name; both change together or neither does.
+            await db.ExecuteInTransactionAsync(async _ =>
+            {
+                AuthService.EnsureSucceeded(await userManager.SetEmailAsync(user, email));
+                AuthService.EnsureSucceeded(await userManager.SetUserNameAsync(user, email));
+                return true;
+            }, ct);
+        }
+        return ToDto(user, await userManager.GetRolesAsync(user));
+    }
+
+    public async Task<UserProfileDto> ChangePhoneAsync(string userId, ChangePhoneRequest request, CancellationToken ct = default)
+    {
+        var user = await FindOrThrowAsync(userId);
+        await AuthService.VerifyCurrentPasswordAsync(signInManager, user, request.CurrentPassword);
+        var roles = await userManager.GetRolesAsync(user);
+
+        return await db.ExecuteInTransactionAsync(async token =>
+        {
+            var phone = AuthService.SetPhone(user, request.Phone, protector);
+            if (roles.Contains(Roles.Citizen))
+                await citizens.LinkUserAsync(phone, user.Id, user.FullName, user.Gender, token);
+            AuthService.EnsureSucceeded(await userManager.UpdateAsync(user));
+            return ToDto(user, roles);
+        }, ct);
     }
 
     public async Task<PagedResult<UserProfileDto>> ListAsync(UserListQuery query, CancellationToken ct = default)
@@ -104,5 +148,7 @@ public sealed class UserService(UserManager<ApplicationUser> userManager, TimePr
         await userManager.FindByIdAsync(userId) ?? throw new NotFoundException("User", userId);
 
     internal static UserProfileDto ToDto(ApplicationUser user, IEnumerable<string> roles) =>
-        new(user.Id, user.Email ?? string.Empty, user.FullName, user.Gender, roles.ToList(), user.IsActive, user.CreatedAt);
+        new(user.Id, user.Email ?? string.Empty, user.FullName, user.Gender,
+            user.PhoneLast4 is null ? null : $"+232 ** *** {user.PhoneLast4}",
+            roles.ToList(), user.IsActive, user.CreatedAt);
 }

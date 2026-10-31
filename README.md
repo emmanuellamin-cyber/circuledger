@@ -223,7 +223,8 @@ which walks the full pipeline in order.
 
 > **Frontend developers:** see **[docs/FRONTEND_INTEGRATION_GUIDE.md](docs/FRONTEND_INTEGRATION_GUIDE.md)** for
 > request/response examples, error codes, state machines, a screen-to-endpoint map, TypeScript types and a
-> ready-made API client.
+> ready-made API client. Building the "My profile" screens (edit details, change email, phone or password)?
+> See **[docs/PROFILE_MANAGEMENT.md](docs/PROFILE_MANAGEMENT.md)**.
 
 All routes are versioned under `/api/v1`. Errors are RFC 7807 `application/problem+json` with `traceId` and a
 machine-readable `code` (e.g. `insufficient_funds`, `photo_required`, `duplicate_imei`).

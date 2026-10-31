@@ -65,6 +65,40 @@ Content-Type: application/json
 
 { "refreshToken": "{{loginBuyer.response.body.refreshToken}}" }
 
+### My profile
+GET {{api}}/users/me
+Authorization: Bearer {{buyer}}
+
+###
+PUT {{api}}/users/me
+Authorization: Bearer {{buyer}}
+Content-Type: application/json
+
+{ "fullName": "Demo Buyer", "gender": "Female" }
+
+### Change contact phone (requires the current password; the response only shows a masked number)
+PUT {{api}}/users/me/phone
+Authorization: Bearer {{buyer}}
+Content-Type: application/json
+
+{ "phone": "076 123 456", "currentPassword": "{{demoPassword}}" }
+
+### Change email (the new address becomes the login).
+### Commented out so a top-to-bottom run doesn't change the demo buyer's login; uncomment to try it.
+# PUT {{api}}/users/me/email
+# Authorization: Bearer {{buyer}}
+# Content-Type: application/json
+#
+# { "newEmail": "buyer2@circuledger.local", "currentPassword": "{{demoPassword}}" }
+
+### Change password (revokes all sessions, returns fresh tokens).
+### Commented out so a top-to-bottom run doesn't change the demo buyer's password; uncomment to try it.
+# PUT {{api}}/users/me/password
+# Authorization: Bearer {{buyer}}
+# Content-Type: application/json
+#
+# { "currentPassword": "{{demoPassword}}", "newPassword": "ChangeMe!Buyer2027" }
+
 ### ---------------------------------------------------------------- 1. USSD sell request (Africa's Talking format)
 # Each hop sends the FULL input history in "text". Responses are plain text: "CON ..." or "END ...".
 POST {{api}}/ussd/callback

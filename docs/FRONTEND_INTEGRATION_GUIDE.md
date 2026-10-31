@@ -449,6 +449,7 @@ Self-registration for **Buyer** (default) or **Citizen** accounts. Staff account
     "email": "ops@circuledger.local",
     "fullName": "Aminata Kamara",
     "gender": "Female",
+    "maskedPhone": "+232 ** *** 3456",
     "roles": ["OperationsLead"],
     "isActive": true,
     "createdAt": "2026-10-30T10:09:15Z"
@@ -474,6 +475,9 @@ Self-registration for **Buyer** (default) or **Citizen** accounts. Staff account
 
 ### 8.2 Users
 
+> Building the "My profile" screens? **[PROFILE_MANAGEMENT.md](PROFILE_MANAGEMENT.md)** has the flows, form
+> rules, error mapping and ready-to-use code for the `/users/me` endpoints below.
+
 #### `GET /users/me` · Authenticated
 **200** → `UserProfile` (see the `user` object above).
 
@@ -482,6 +486,35 @@ Self-registration for **Buyer** (default) or **Citizen** accounts. Staff account
 { "fullName": "Aminata K. Kamara", "gender": "Female" }
 ```
 **200** → `UserProfile`.
+
+#### `PUT /users/me/password` · Authenticated
+```json
+{ "currentPassword": "old password", "newPassword": "at least 10 characters" }
+```
+**200** → a new `AuthResponse`. **Replace both stored tokens with the ones returned.** Every refresh token issued
+before the change is revoked, so the user is signed out on all other devices.
+**400** `errors.CurrentPassword` (wrong current password), or the new password is too short, too weak, or the same as the current one.
+**401** the account is locked after repeated wrong current passwords (same lockout as login).
+
+#### `PUT /users/me/email` · Authenticated
+```json
+{ "newEmail": "aminata.k@example.com", "currentPassword": "current password" }
+```
+**200** → `UserProfile`. The new email is the login from now on. The `email` claim inside the current access token
+stays old until the next `/auth/refresh`, so read the email from this response or from `GET /users/me`.
+**400** `errors.CurrentPassword` (wrong password), `errors.DuplicateEmail` (already in use), or an invalid address.
+**401** the account is locked (same lockout as login).
+
+#### `PUT /users/me/phone` · Authenticated
+```json
+{ "phone": "+23276123456", "currentPassword": "current password" }
+```
+Accepts `+232XXXXXXXX`, `0XXXXXXXX` or an 8-digit local number.
+**200** → `UserProfile` with `maskedPhone` updated (the full number is never returned).
+For **Citizen** accounts, USSD/SMS sell requests from the new number now appear under `GET /users/me/intake-requests`.
+The old number is released, so requests made from it are no longer listed.
+**400** `errors.CurrentPassword`, `errors.Phone` (invalid, or already linked to another citizen account).
+**401** the account is locked (same lockout as login).
 
 #### `GET /users/me/intake-requests` · Citizen
 A registered citizen's own sell requests (matched by the phone number they registered with).
@@ -1539,6 +1572,7 @@ Use it for a status indicator or uptime monitor. `status` is `Healthy`, `Degrade
 | Screen | Endpoints |
 |---|---|
 | Login | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /users/me` |
+| My profile | `GET /users/me`, `PUT /users/me`, `PUT /users/me/email`, `PUT /users/me/phone`, `PUT /users/me/password` |
 | Home / KPIs | `GET /dashboard/kpis`, `GET /dashboard/time-series/intake`, `GET /dashboard/time-series/sales`, `GET /ledger/verify` (integrity badge), `GET /health` |
 | Reports | `GET /dashboard/export/kpis.csv`, `GET /dashboard/export/weekly.csv` |
 | Intake inbox | `GET /intake-requests?status=…`, `GET /intake-requests/{id}`, `POST /intake-requests`, `POST …/cancel`, `POST …/reject`, `POST …/receive`, `POST /intake-requests/walk-in`, `GET /drop-off-points` |
@@ -1674,7 +1708,7 @@ export type LedgerEventType = "IntakeCreated" | "DeviceReceived" | "Purchased" |
   | "Dismantled" | "ComponentRecovered" | "MaterialDiverted" | "Listed" | "Sold" | "Reinvested";
 
 // ---------- auth & users ----------
-export interface UserProfile { id: string; email: string; fullName: string; gender: Gender; roles: Role[]; isActive: boolean; createdAt: IsoDateTime; }
+export interface UserProfile { id: string; email: string; fullName: string; gender: Gender; maskedPhone: string | null; roles: Role[]; isActive: boolean; createdAt: IsoDateTime; }
 export interface AuthResponse { accessToken: string; accessTokenExpiresAt: IsoDateTime; refreshToken: string; refreshTokenExpiresAt: IsoDateTime; user: UserProfile; }
 export interface RegisterRequest { email: string; password: string; fullName: string; gender?: Gender; accountType?: "Buyer" | "Citizen"; phone?: string | null; }
 export interface LoginRequest { email: string; password: string; }

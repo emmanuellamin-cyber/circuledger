@@ -178,6 +178,82 @@ public class BusinessRuleTests(CircuLedgerApiFactory factory)
     }
 
     [Fact]
+    public async Task User_can_manage_profile_and_change_password_which_signs_out_other_sessions()
+    {
+        const string oldPassword = "Original!Pass-2026", newPassword = "Changed!Pass-2026";
+        var email = $"profile-{Guid.NewGuid():N}@circuledger.local";
+        var anonymous = factory.CreateClient();
+        var registered = await (await anonymous.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email, password = oldPassword, fullName = "Profile Tester", gender = "Female"
+        })).Json();
+        var oldRefresh = registered.Str("refreshToken");
+
+        var client = await factory.ClientForAsync(email, oldPassword);
+        var updated = await (await client.PutAsJsonAsync("/api/v1/users/me", new { fullName = "Profile T. Renamed", gender = "Male" })).Json();
+        Assert.Equal("Profile T. Renamed", updated.Str("fullName"));
+        Assert.Equal("Male", updated.Str("gender"));
+
+        var wrongCurrent = await client.PutAsJsonAsync("/api/v1/users/me/password", new { currentPassword = "Not!The-Password1", newPassword });
+        Assert.Equal(HttpStatusCode.BadRequest, wrongCurrent.StatusCode);
+        var sameAsOld = await client.PutAsJsonAsync("/api/v1/users/me/password", new { currentPassword = oldPassword, newPassword = oldPassword });
+        Assert.Equal(HttpStatusCode.BadRequest, sameAsOld.StatusCode);
+
+        var changed = await (await client.PutAsJsonAsync("/api/v1/users/me/password", new { currentPassword = oldPassword, newPassword })).Json();
+        Assert.False(string.IsNullOrEmpty(changed.Str("accessToken")));
+
+        // Sessions from before the change are dead; the refresh token handed back with the change still works.
+        var staleRefresh = await anonymous.PostAsJsonAsync("/api/v1/auth/refresh", new { refreshToken = oldRefresh });
+        Assert.Equal(HttpStatusCode.Unauthorized, staleRefresh.StatusCode);
+        var freshRefresh = await anonymous.PostAsJsonAsync("/api/v1/auth/refresh", new { refreshToken = changed.Str("refreshToken") });
+        Assert.Equal(HttpStatusCode.OK, freshRefresh.StatusCode);
+
+        var oldLogin = await anonymous.PostAsJsonAsync("/api/v1/auth/login", new { email, password = oldPassword });
+        Assert.Equal(HttpStatusCode.Unauthorized, oldLogin.StatusCode);
+        var newLogin = await anonymous.PostAsJsonAsync("/api/v1/auth/login", new { email, password = newPassword });
+        Assert.Equal(HttpStatusCode.OK, newLogin.StatusCode);
+    }
+
+    [Fact]
+    public async Task User_can_change_email_and_citizen_phone_change_releases_the_old_number()
+    {
+        const string password = "Citizen!Pass-2026";
+        var email = $"citizen-{Guid.NewGuid():N}@circuledger.local";
+        string oldPhone = TestData.Phone(), newPhone = TestData.Phone();
+        var anonymous = factory.CreateClient();
+        await (await anonymous.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email, password, fullName = "Phone Changer", gender = "Female", accountType = "Citizen", phone = oldPhone
+        })).Json();
+        var client = await factory.ClientForAsync(email, password);
+        Assert.EndsWith(oldPhone[^4..], (await (await client.GetAsync("/api/v1/users/me")).Json()).Str("maskedPhone"));
+
+        // Email: re-authentication required, duplicates refused, and the new address becomes the login.
+        var wrongPassword = await client.PutAsJsonAsync("/api/v1/users/me/email", new { newEmail = "x@circuledger.local", currentPassword = "Not!The-Password1" });
+        Assert.Equal(HttpStatusCode.BadRequest, wrongPassword.StatusCode);
+        var taken = await client.PutAsJsonAsync("/api/v1/users/me/email", new { newEmail = "buyer@circuledger.local", currentPassword = password });
+        Assert.Equal(HttpStatusCode.BadRequest, taken.StatusCode);
+        var newEmail = $"renamed-{Guid.NewGuid():N}@circuledger.local";
+        var withEmail = await (await client.PutAsJsonAsync("/api/v1/users/me/email", new { newEmail, currentPassword = password })).Json();
+        Assert.Equal(newEmail, withEmail.Str("email"));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync("/api/v1/auth/login", new { email, password })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await anonymous.PostAsJsonAsync("/api/v1/auth/login", new { email = newEmail, password })).StatusCode);
+
+        // Phone: invalid numbers refused; a valid change shows on the profile.
+        var invalid = await client.PutAsJsonAsync("/api/v1/users/me/phone", new { phone = "12", currentPassword = password });
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        var withPhone = await (await client.PutAsJsonAsync("/api/v1/users/me/phone", new { phone = newPhone, currentPassword = password })).Json();
+        Assert.EndsWith(newPhone[^4..], withPhone.Str("maskedPhone"));
+
+        // The old number is released, so someone else can now register with it.
+        var reuse = await anonymous.PostAsJsonAsync("/api/v1/auth/register", new
+        {
+            email = $"next-owner-{Guid.NewGuid():N}@circuledger.local", password, fullName = "Next Owner", accountType = "Citizen", phone = oldPhone
+        });
+        Assert.Equal(HttpStatusCode.OK, reuse.StatusCode);
+    }
+
+    [Fact]
     public async Task Role_policies_are_enforced()
     {
         var anonymous = factory.CreateClient();
