@@ -23,14 +23,15 @@ public sealed class LedgerService(ApplicationDbContext db, ICurrentUser currentU
         CancellationToken cancellationToken = default) =>
         db.ExecuteInTransactionAsync(async ct =>
         {
-            // 1. Serialise writers. In READ COMMITTED, a writer blocked on "FOR UPDATE" of the old tail would
-            //    re-check that same row after the other writer commits and chain off it, forking the ledger.
-            //    The advisory lock makes the next statement take a fresh snapshot. It also covers an empty table.
+            // 1. Serialise writers with a transaction-scoped advisory lock. Every append takes it, so only one
+            //    writer at a time reads the tail and chains off it. It also covers an empty table.
             await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({LedgerLockKey})", ct);
 
-            // 2. Row-lock the current tail (SELECT ... FOR UPDATE) and read its hash.
+            // 2. Read the current tail's hash. In READ COMMITTED this statement takes a fresh snapshot after the lock
+            //    is granted, so it sees the previous writer's committed entry. No FOR UPDATE: row locks need the
+            //    UPDATE privilege, which the append-only migration revokes (superusers, as in tests, bypass that).
             var tail = await db.LedgerEntries
-                .FromSql($"SELECT * FROM ledger_entries ORDER BY sequence_number DESC LIMIT 1 FOR UPDATE")
+                .FromSql($"SELECT * FROM ledger_entries ORDER BY sequence_number DESC LIMIT 1")
                 .AsNoTracking()
                 .ToListAsync(ct);
             var previousHash = tail.Count == 0 ? LedgerHasher.GenesisHash : tail[0].Hash;
