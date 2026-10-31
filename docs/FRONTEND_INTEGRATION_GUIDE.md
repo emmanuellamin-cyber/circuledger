@@ -397,7 +397,7 @@ Editing is allowed in `Draft`, `Published` and `Withdrawn` (not in `Reserved` or
 ### Order
 
 `Pending` → **Pay** (Ops confirms payment) → `Paid` → **Fulfil** (Ops) → `Fulfilled`.
-`Pending` → **Cancel** (buyer or Ops) → `Cancelled`. Only `Pending` orders can be cancelled.
+`Pending` → **Cancel** (buyer or Ops, with a required `reason`) → `Cancelled`. Only `Pending` orders can be cancelled.
 
 ---
 
@@ -1293,7 +1293,32 @@ No body. Paid → Fulfilled (handed over or delivered). → `Order`.
 ```json
 { "reason": "Changed my mind" }
 ```
-Only `Pending` orders. Listings return to `Published`. → `Order`.
+
+| Field | Rules | Notes |
+|---|---|---|
+| `reason` | **required**, 1–300 characters | Stored on the order and returned as `cancellationReason`. Ops see it in the orders list. |
+
+Only `Pending` orders. Listings return to `Published`. **200** → `Order` with `status: "Cancelled"`, `cancelledAt` and `cancellationReason` set.
+
+| Status | When | What to do in the UI |
+|---|---|---|
+| 400 `errors.Reason` | Body missing, or `reason` empty or over 300 characters | Show it on the reason field. |
+| 403 `forbidden` | Not the buyer who placed it, and not Admin/OperationsLead | Hide the button for other users' orders. |
+| 404 `not_found` | Unknown order ID | Refresh the list. |
+| 422 `invalid_state_transition` | Order is already `Paid`, `Fulfilled` or `Cancelled` | Show the button only when `status === "Pending"`. |
+
+**UI pattern:** clicking **Cancel order** opens a small dialog with a reason picker or text box
+(e.g. "Changed my mind", "Found a better price", "Ordered by mistake", "Other…") and a **Confirm** button.
+Send the chosen text as `reason`. If you skip the dialog, still send a default such as `"Cancelled by buyer"`.
+
+```ts
+export const cancelOrder = (orderId: Guid, reason: string) =>
+  api<Order>(`/orders/${orderId}/cancel`, { method: "POST", body: { reason } satisfies CancelOrderRequest });
+```
+
+> **Gotcha:** if the Cancel button sits inside a `<form>`, give it `type="button"` (or call `e.preventDefault()`
+> in `onSubmit`). Otherwise the browser submits the form and reloads the page as
+> `GET /marketplace/orders/{id}?` instead of calling the API.
 
 ---
 
@@ -1773,6 +1798,7 @@ export interface CreateListingRequest { itemType: ListingItemType; deviceId?: Gu
 export interface ListingSearchQuery { search?: string; brand?: string; itemType?: ListingItemType; componentType?: ComponentType; condition?: Grade; minPrice?: number; maxPrice?: number; samsungOnly?: boolean; status?: ListingStatus; sort?: "newest" | "price_asc" | "price_desc"; page?: number; pageSize?: number; }
 export interface OrderItem { listingId: Guid; listingCode: string; title: string; priceSle: number; certificateNumber: string | null; }
 export interface ReinvestmentSummary { saleTotalSle: number; seedFundSle: number; trainingFundSle: number; totalReinvestedSle: number; }
+export interface CancelOrderRequest { reason: string; } // required, 1–300 chars
 export interface Order { id: Guid; orderNumber: string; buyerUserId: string; status: OrderStatus; totalSle: number; paymentMethod: string | null; paymentReference: string | null; createdAt: IsoDateTime; paidAt: IsoDateTime | null; fulfilledAt: IsoDateTime | null; cancelledAt: IsoDateTime | null; cancellationReason: string | null; items: OrderItem[]; reinvestment: ReinvestmentSummary | null; }
 
 // ---------- funds ----------
@@ -1966,6 +1992,8 @@ After a mutation, invalidate the related keys (e.g. after a purchase, invalidate
 - [ ] **Publish** is disabled until `photos.some(p => p.isVerified)`. **Verify** is disabled for the photo's uploader.
 - [ ] Show the **certificate badge** on refurbished listings (`certificateNumber`).
 - [ ] After `409 listing_unavailable` at checkout, refetch the cart items and drop the unavailable ones.
+- [ ] **Cancel order** always sends a `reason` (required, ≤ 300 chars) and is shown only for `Pending` orders.
+- [ ] Action buttons inside a `<form>` use `type="button"`, so they call the API instead of submitting the form.
 - [ ] Safety-gated actions (dismantle, components, hazardous) may return **403** for untrained staff. Show the message.
 - [ ] Respect rate limits (429). Debounce search boxes (~300 ms) on the public marketplace.
 - [ ] After a role change by an Admin, the user must refresh or log in again to get the new permissions.
